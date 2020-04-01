@@ -3,6 +3,7 @@ import tkinter.messagebox
 import tkinter.simpledialog
 import re
 import chat
+import emoji
 
 # This is a hack to get emojis to work with tkinter because
 # tkinter has a bug (I confirmed this with a developer from
@@ -25,8 +26,10 @@ def replace_emoji(string):
 
 
 class ChatFrame(tkinter.Frame):
-    def __init__(self, master=None, **kw):
+    def __init__(self, send_callback, master=None, **kw):
         super().__init__(master, **kw)
+
+        self.__callback = send_callback
 
         # Allow the frame widget to take up the entire window.
         self.pack(fill=tkinter.BOTH, expand=True)
@@ -49,8 +52,16 @@ class ChatFrame(tkinter.Frame):
         scroll.config(command=self.__msg_list.yview)
         scroll.pack(side=tkinter.RIGHT, fill=tkinter.Y)
 
-    def __send(self):
-        pass
+    def add_message(self, msg):
+        self.__msg_list.insert(tkinter.END, replace_emoji(msg))
+
+    def clear_messages(self):
+        self.__msg_list.delete(0, tkinter.END)
+
+    def __send(self, arg=None):
+        self.add_message('You: ' + replace_emoji(self.__msg_entry.get()))
+        self.__callback(self.__msg_entry.get())
+        self.__msg_entry.delete(0, tkinter.END)
 
 
 class ConnectDialog(tkinter.Toplevel):
@@ -102,7 +113,7 @@ class ConnectDialog(tkinter.Toplevel):
 
         # Give ourselves focus since we are a popup dialog.
         self.grab_set()
-        self.__address_entry.focus_set()
+        self.__name_entry.focus_set()
         self.wait_window(self)
 
     def __ok(self, event=None):
@@ -129,16 +140,19 @@ class ConnectDialog(tkinter.Toplevel):
         return self.__address
 
     def get_port(self):
-        return self.__port
+        return int(self.__port)
 
 
 class ChatTk(tkinter.Tk):
     def __init__(self):
         super().__init__()
+
+        self.tk.call('encoding', 'system', 'utf-8')
+
         self.title('pychat')
         self.geometry('400x300')
 
-        self.__chat = None
+        self.__net = None
 
         # Create the menu bar that goes across the top.
         menu = tkinter.Menu(self)
@@ -149,33 +163,61 @@ class ChatTk(tkinter.Tk):
         file.add_command(label='Disconnect', command=self.__disconnect)
         file.add_command(label='Host', command=self.__host)
         file.add_separator()
-        file.add_command(label='Exit', command=self.quit)
+        file.add_command(label='Exit', command=self.__exit)
         menu.add_cascade(label='File', menu=file)
 
-        self.__chat = ChatFrame(self)
+        self.__chat = ChatFrame(self.__send, self)
+        self.protocol('WM_DELETE_WINDOW', self.__closing)
+
+    def __exit(self):
+        self.__closing()
+        self.quit()
+
+    def __thread_error(self, msg):
+        tkinter.messagebox.showerror('Error!', msg)
+
+    def __closing(self):
+        if self.__net is not None and not self.__net.is_done():
+            self.__net.stop()
+        self.destroy()
+
+    def __got_message(self, msg):
+        self.__chat.add_message(self.__net.get_connected_username() + ': ' + msg)
+
+    def __send(self, msg):
+        try:
+            if self.__net is None:
+                raise RuntimeError('No chat connected.')
+            if self.__net.is_done():
+                raise RuntimeError('Chat is already finished.')
+            self.__net.send_message(msg)
+        except RuntimeError as e:
+            tkinter.messagebox.showerror('Error!', str(e))
 
     def __connect(self):
         dialog = ConnectDialog(self)
         if not dialog.was_canceled():
             try:
-                if self.__chat is not None and not self.__chat.is_done():
+                if self.__net is not None and not self.__net.is_done():
                     raise RuntimeError('Chat is already running.')
-                self.__chat = chat.Chat(dialog.get_username())
-                self.__chat.connect(dialog.get_address(), dialog.get_port())
+                self.__net = chat.Chat(dialog.get_username(), self.__got_message, self.__thread_error)
+                self.__net.connect(dialog.get_address(), dialog.get_port())
             except RuntimeError as e:
                 tkinter.messagebox.showerror('Error!', str(e))
 
     def __disconnect(self):
-        pass
+        self.__chat.clear_messages()
+        if self.__net is not None and not self.__net.is_done():
+            self.__net.stop()
 
     def __host(self):
         dialog = ConnectDialog(self)
         if not dialog.was_canceled():
             try:
-                if self.__chat is not None and not self.__chat.is_done():
+                if self.__net is not None and not self.__net.is_done():
                     raise RuntimeError('Chat is already running.')
-                self.__chat = chat.Chat(dialog.get_username())
-                self.__chat.host(dialog.get_address(), dialog.get_port())
+                self.__net = chat.Chat(dialog.get_username(), self.__got_message, self.__thread_error)
+                self.__net.host(dialog.get_address(), dialog.get_port())
             except RuntimeError as e:
                 tkinter.messagebox.showerror('Error!', str(e))
 

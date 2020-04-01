@@ -13,10 +13,12 @@ class ChatState(enum.Enum):
 
 MESSAGE_START_TEXT = 0
 MESSAGE_TEXT = 1
+REQUEST_USERNAME = 2
+USERNAME = 3
 
 
 class Chat:
-    def __init__(self, username):
+    def __init__(self, username, receive_callback, error_callback):
         self.__done = True
         self.__socket = None
         self.__client = None
@@ -24,6 +26,9 @@ class Chat:
         self.__port = 0
         self.__state = ChatState.idle
         self.__name = username
+        self.__other_name = ''
+        self.__callback = receive_callback
+        self.__error = error_callback
 
     def host(self, host, port):
         # The server must be running on a different thread to keep things responsive.
@@ -38,8 +43,6 @@ class Chat:
     def stop(self):
         if not self.__done:
             self.__done = True
-            self.__client.close()
-            self.__socket.close()
         else:
             raise RuntimeError('Unable to stop when chat was never started.')
 
@@ -56,7 +59,7 @@ class Chat:
         return self.__name
 
     def get_connected_username(self):
-        return ''
+        return self.__other_name
 
     def send_message(self, message):
         if self.__state == ChatState.hosting or self.__state == ChatState.connected:
@@ -78,39 +81,49 @@ class Chat:
                 msg = bytearray()
                 msg.append(MESSAGE_TEXT)
                 if i == num - 1:
-                    msg += message[place:].encode('utf-8')
+                    msg += message[place:].encode()
                 else:
-                    msg += message[place:place+1023].encode('utf-8')
+                    msg += message[place:place+1023].encode()
                 self.__client.send(msg)
         else:
             raise RuntimeError('Must be connected to send a message.')
 
     def __run_client(self, host, port):
-        self.__done = False
-        self.__state = ChatState.connected
-        self.__ip = host
-        self.__port = port
+        try:
+            self.__done = False
+            self.__state = ChatState.connected
+            self.__ip = host
+            self.__port = port
 
-        self.__socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.__socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.__socket.connect((host, port))
-        # We use the same socket when we are not the host.
-        self.__client = self.__socket
+            try:
+                self.__socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.__socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.__socket.connect((host, port))
+                # We use the same socket when we are not the host.
+                self.__client = self.__socket
+            except socket.error:
+                raise RuntimeError('Failed to connect.')
 
-        self.__listen()
+            self.__listen()
+        except Exception as e:
+            self.__error(str(e))
 
     def __run_host(self, host, port):
-        self.__done = False
-        self.__state = ChatState.host_is_waiting
-        self.__ip = host
-        self.__port = port
+        try:
+            self.__done = False
+            self.__state = ChatState.host_is_waiting
+            self.__ip = host
+            self.__port = port
 
-        self.__socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.__socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self.__socket.bind((host, port))
-        self.__socket.listen(1)
+            self.__socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.__socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.__socket.bind((host, port))
+            self.__socket.settimeout(1)
+            self.__socket.listen(1)
 
-        self.__listen()
+            self.__listen()
+        except Exception as e:
+            self.__error(str(e))
 
     def __listen(self):
         while not self.__done:
@@ -119,12 +132,21 @@ class Chat:
                 # client at a time so it does not make sense to start a thread for
                 # each client that connects. Instead I have a state machine and the program
                 # switches states depending on if there is a client connected.
-                self.__client, address = self.__socket.accept()
+                try:
+                    self.__client, address = self.__socket.accept()
+                except socket.error:
+                    continue
 
                 self.__state = ChatState.hosting
+
+                # Send the new client our username and request their username in response.
+
             elif self.__state == ChatState.hosting or self.__state == ChatState.connected:
-                data = bytearray(self.__client.recv(1024))
-                print(data)
+                data = bytearray()
+                try:
+                    data = bytearray(self.__client.recv(1024))
+                except socket.error:
+                    self.stop()
 
                 if len(data) == 0:
                     continue
@@ -145,7 +167,14 @@ class Chat:
                         data = bytearray(self.__client.recv(1024))
                         if int(data[0]) != MESSAGE_TEXT:
                             raise RuntimeError('Expected a text-formatted message.')
-                        message += data[1:].decode('utf-8')
-                        print(message)
+                        message += data[1:].decode()
+                    self.__callback(message)
                 elif int(data[0]) == MESSAGE_TEXT:
                     raise RuntimeError('Expected a text message after a start-text message.')
+        # Post chat clean up.
+        if self.__state == ChatState.hosting or self.__state == ChatState.connected:
+            self.__client.close()
+        elif self.__state == ChatState.hosting:
+            self.__socket.close()
+        self.__socket.close()
+        self.__state = ChatState.idle
