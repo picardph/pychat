@@ -13,8 +13,8 @@ class ChatState(enum.Enum):
 
 MESSAGE_START_TEXT = 0
 MESSAGE_TEXT = 1
-REQUEST_USERNAME = 2
-USERNAME = 3
+MESSAGE_REQUEST_USERNAME = 2
+MESSAGE_USERNAME = 3
 
 
 class Chat:
@@ -140,6 +140,10 @@ class Chat:
                 self.__state = ChatState.hosting
 
                 # Send the new client our username and request their username in response.
+                data = bytearray()
+                data.append(MESSAGE_REQUEST_USERNAME)
+                data += self.__name.encode()
+                self.__client.send(data)
 
             elif self.__state == ChatState.hosting or self.__state == ChatState.connected:
                 data = bytearray()
@@ -169,6 +173,17 @@ class Chat:
                             raise RuntimeError('Expected a text-formatted message.')
                         message += data[1:].decode()
                     self.__callback(message)
+                elif int(data[0]) == MESSAGE_USERNAME:
+                    # The other computer has sent us a username so lets remember it.
+                    self.__other_name = data[1:].decode()
+                elif int(data[0]) == MESSAGE_REQUEST_USERNAME:
+                    # The other computer wants to know what our username is. It will also contain
+                    # the username of that computer.
+                    self.__other_name = data[1:].decode()
+                    response_msg = bytearray()
+                    response_msg.append(MESSAGE_USERNAME)
+                    response_msg += self.__name.encode()
+                    self.__client.send(response_msg)
                 elif int(data[0]) == MESSAGE_TEXT:
                     raise RuntimeError('Expected a text message after a start-text message.')
         # Post chat clean up.

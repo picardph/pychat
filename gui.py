@@ -2,8 +2,8 @@ import tkinter
 import tkinter.messagebox
 import tkinter.simpledialog
 import re
-import chat
 import emoji
+import chat
 
 # This is a hack to get emojis to work with tkinter because
 # tkinter has a bug (I confirmed this with a developer from
@@ -59,8 +59,9 @@ class ChatFrame(tkinter.Frame):
         self.__msg_list.delete(0, tkinter.END)
 
     def __send(self, arg=None):
-        self.add_message('You: ' + replace_emoji(self.__msg_entry.get()))
-        self.__callback(self.__msg_entry.get())
+        msg = emoji.emojize(self.__msg_entry.get())
+        self.add_message('You: ' + replace_emoji(msg))
+        self.__callback(msg)
         self.__msg_entry.delete(0, tkinter.END)
 
 
