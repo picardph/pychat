@@ -189,7 +189,5 @@ class Chat:
         # Post chat clean up.
         if self.__state == ChatState.hosting or self.__state == ChatState.connected:
             self.__client.close()
-        elif self.__state == ChatState.hosting:
-            self.__socket.close()
         self.__socket.close()
         self.__state = ChatState.idle
