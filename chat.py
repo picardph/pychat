@@ -19,7 +19,6 @@ MESSAGE_USERNAME = 3
 
 class Chat:
     def __init__(self, username, receive_callback, error_callback):
-        self.__done = True
         self.__socket = None
         self.__client = None
         self.__ip = ''
@@ -29,22 +28,21 @@ class Chat:
         self.__other_name = ''
         self.__callback = receive_callback
         self.__error = error_callback
+        self.__thread = None
+        self.__stop_event = threading.Event()
 
     def host(self, host, port):
         # The server must be running on a different thread to keep things responsive.
-        threading.Thread(target=self.__run_host, args=(host, port)).start()
+        self.__thread = threading.Thread(target=self.__run_host, args=(host, port)).start()
 
     def connect(self, host, port):
-        threading.Thread(target=self.__run_client, args=(host, port)).start()
+        self.__thread = threading.Thread(target=self.__run_client, args=(host, port)).start()
 
     def is_done(self):
-        return self.__done
+        return self.__stop_event.is_set()
 
     def stop(self):
-        if not self.__done:
-            self.__done = True
-        else:
-            raise RuntimeError('Unable to stop when chat was never started.')
+        self.__stop_event.set()
 
     def get_address(self):
         return self.__ip
@@ -90,7 +88,6 @@ class Chat:
 
     def __run_client(self, host, port):
         try:
-            self.__done = False
             self.__state = ChatState.connected
             self.__ip = host
             self.__port = port
@@ -98,6 +95,7 @@ class Chat:
             try:
                 self.__socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.__socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                self.__socket.settimeout(1)
                 self.__socket.connect((host, port))
                 # We use the same socket when we are not the host.
                 self.__client = self.__socket
@@ -110,7 +108,6 @@ class Chat:
 
     def __run_host(self, host, port):
         try:
-            self.__done = False
             self.__state = ChatState.host_is_waiting
             self.__ip = host
             self.__port = port
@@ -126,7 +123,8 @@ class Chat:
             self.__error(str(e))
 
     def __listen(self):
-        while not self.__done:
+        while not self.__stop_event.is_set():
+            print('Thread running')
             if self.__state == ChatState.host_is_waiting:
                 # Unlike with the FTP project, the chat program can only have one
                 # client at a time so it does not make sense to start a thread for
@@ -150,9 +148,9 @@ class Chat:
                 try:
                     data = bytearray(self.__client.recv(1024))
                 except socket.error:
-                    self.stop()
+                    continue
 
-                if len(data) == 0:
+                if not data or len(data) == 0:
                     continue
 
                 # The first byte will always be used to indicate
@@ -187,7 +185,6 @@ class Chat:
                 elif int(data[0]) == MESSAGE_TEXT:
                     raise RuntimeError('Expected a text message after a start-text message.')
         # Post chat clean up.
-        if self.__state == ChatState.hosting or self.__state == ChatState.connected:
-            self.__client.close()
+        self.__client.close()
         self.__socket.close()
         self.__state = ChatState.idle

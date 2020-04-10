@@ -178,7 +178,7 @@ class ChatTk(tkinter.Tk):
         tkinter.messagebox.showerror('Error!', msg)
 
     def __closing(self):
-        if self.__net is not None and not self.__net.is_done():
+        if self.__net is not None:
             self.__net.stop()
         self.destroy()
 
