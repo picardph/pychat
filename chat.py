@@ -75,13 +75,14 @@ class Chat:
             for i in range(num):
                 # If we are on the last message then there may not be
                 # 1023 bytes remaining so we will just grab whatever is left.
-                place = i * 1023
+                place = i * 1022
                 msg = bytearray()
                 msg.append(MESSAGE_TEXT)
                 if i == num - 1:
                     msg += message[place:].encode()
                 else:
-                    msg += message[place:place+1023].encode()
+                    msg += message[place:place + 1022].encode()
+                msg += '\n'.encode()
                 self.__client.send(msg)
         else:
             raise RuntimeError('Must be connected to send a message.')
@@ -124,7 +125,6 @@ class Chat:
 
     def __listen(self):
         while not self.__stop_event.is_set():
-            print('Thread running')
             if self.__state == ChatState.host_is_waiting:
                 # Unlike with the FTP project, the chat program can only have one
                 # client at a time so it does not make sense to start a thread for
@@ -146,7 +146,7 @@ class Chat:
             elif self.__state == ChatState.hosting or self.__state == ChatState.connected:
                 data = bytearray()
                 try:
-                    data = bytearray(self.__client.recv(1024))
+                    data = bytearray(self.__client.recv(2))
                 except socket.error:
                     continue
 
@@ -172,11 +172,14 @@ class Chat:
                         message += data[1:].decode()
                     self.__callback(message)
                 elif int(data[0]) == MESSAGE_USERNAME:
+                    # Get the rest of the message.
+                    data += self.__client.recv(1022)
                     # The other computer has sent us a username so lets remember it.
                     self.__other_name = data[1:].decode()
                 elif int(data[0]) == MESSAGE_REQUEST_USERNAME:
                     # The other computer wants to know what our username is. It will also contain
                     # the username of that computer.
+                    data += self.__client.recv(1022)
                     self.__other_name = data[1:].decode()
                     response_msg = bytearray()
                     response_msg.append(MESSAGE_USERNAME)
@@ -185,6 +188,8 @@ class Chat:
                 elif int(data[0]) == MESSAGE_TEXT:
                     raise RuntimeError('Expected a text message after a start-text message.')
         # Post chat clean up.
-        self.__client.close()
-        self.__socket.close()
+        if self.__client is not None:
+            self.__client.close()
+        if self.__socket is not None:
+            self.__socket.close()
         self.__state = ChatState.idle
